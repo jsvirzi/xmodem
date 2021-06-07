@@ -164,7 +164,7 @@ int xmodem_send(GenericDevice *src, GenericDevice *dst, XmodemOptions *options, 
 	/* NAK = no crc, C = CRC. setting valid for whole session */
     for (int retry = 0; (options->max_retries == 0) || (retry < options->max_retries); ++retry)
     {
-        if (dst->getc(dst->fd, &byte, options->timeout_ms)) {
+        if (dst->getc(&dst->fd, &byte, options->timeout_ms)) {
             switch (byte)
             {
                 case XMODEM_CCC: { options->crc_checksum = CHECKSUM_OPTION_CRC; }
@@ -174,9 +174,9 @@ int xmodem_send(GenericDevice *src, GenericDevice *dst, XmodemOptions *options, 
                 break;
 
                 case XMODEM_CAN: {
-                    if (dst->getc(dst->fd, &byte, options->timeout_ms)) {
+                    if (dst->getc(&dst->fd, &byte, options->timeout_ms)) {
                         if (byte == XMODEM_CAN) {
-                            dst->putc(dst->fd, XMODEM_ACK, options->timeout_ms);
+                            dst->putc(&dst->fd, XMODEM_ACK, options->timeout_ms);
                             failure = 1;
                         }
                     }
@@ -194,7 +194,7 @@ int xmodem_send(GenericDevice *src, GenericDevice *dst, XmodemOptions *options, 
     }
 
     if ((options->crc_checksum != CHECKSUM_OPTION_CRC) && (options->crc_checksum != CHECKSUM_OPTION_SUM)) {
-        for (int i = 0; i < 3; ++i) { dst->putc(dst->fd, XMODEM_CAN, options->timeout_ms); }
+        for (int i = 0; i < 3; ++i) { dst->putc(&dst->fd, XMODEM_CAN, options->timeout_ms); }
         failure = 1;
     }
 
@@ -220,8 +220,8 @@ int xmodem_send(GenericDevice *src, GenericDevice *dst, XmodemOptions *options, 
         if (payload_size == 0) { /* we're done sending whole packets. finish, clean up and go home */
             byte = XMODEM_NAK; /* set to decoy invalid value */
             for (int retry = 0; retry < options->max_retries; ++retry) {
-                dst->putc(dst->fd, XMODEM_EOT, options->timeout_ms);
-                if (dst->getc(dst->fd, &byte, options->timeout_ms)) {
+                dst->putc(&dst->fd, XMODEM_EOT, options->timeout_ms);
+                if (dst->getc(&dst->fd, &byte, options->timeout_ms)) {
                     if (byte == XMODEM_ACK) { break; }
                 }
             }
@@ -234,7 +234,7 @@ int xmodem_send(GenericDevice *src, GenericDevice *dst, XmodemOptions *options, 
             int n_read = read_from_file(src->name, bytes_sent, &payload[local_data_read], remaining);
             if (n_read < 0)
             {
-                for (int i = 0; i < 3; ++i) { dst->putc(dst->fd, XMODEM_CAN, options->timeout_ms); }
+                for (int i = 0; i < 3; ++i) { dst->putc(&dst->fd, XMODEM_CAN, options->timeout_ms); }
                 failure = 1;
             }
             remaining -= n_read;
@@ -270,13 +270,13 @@ int xmodem_send(GenericDevice *src, GenericDevice *dst, XmodemOptions *options, 
 #endif
 
 #ifndef DEBUG
-            while (dst->getc(dst->fd, &byte, options->timeout_ms)) { ; } /* flush away bytes in rx queue */
+            while (dst->getc(&dst->fd, &byte, options->timeout_ms)) { ; } /* flush away bytes in rx queue */
 
-            dst->send(dst->fd, xmodem_holding_buffer, n_bytes, options->timeout_ms); /* send packet */
+            dst->send(&dst->fd, xmodem_holding_buffer, n_bytes, options->timeout_ms); /* send packet */
 #endif
 
             byte = 0;
-            if (dst->getc(dst->fd, &byte, options->timeout_ms)) /* wait for confirm (ACK) or retry */
+            if (dst->getc(&dst->fd, &byte, options->timeout_ms)) /* wait for confirm (ACK) or retry */
             {
                 switch (byte)
                 {
@@ -287,8 +287,8 @@ int xmodem_send(GenericDevice *src, GenericDevice *dst, XmodemOptions *options, 
                     break;
 
                 case XMODEM_CAN: /* received one cancel. need another to confirm */
-                    if (dst->getc(dst->fd, &byte, options->timeout_ms) && (byte == XMODEM_CAN)) {
-                        dst->putc(dst->fd, XMODEM_ACK, options->timeout_ms);
+                    if (dst->getc(&dst->fd, &byte, options->timeout_ms) && (byte == XMODEM_CAN)) {
+                        dst->putc(&dst->fd, XMODEM_ACK, options->timeout_ms);
                         failure = 1;
                     }
                     break;
@@ -307,7 +307,7 @@ int xmodem_send(GenericDevice *src, GenericDevice *dst, XmodemOptions *options, 
         total_retries += retries;
 
         if (success == 0) {
-            for (int i = 0; i < 3; ++i) { dst->putc(dst->fd, XMODEM_CAN, options->timeout_ms); }
+            for (int i = 0; i < 3; ++i) { dst->putc(&dst->fd, XMODEM_CAN, options->timeout_ms); }
             failure = 1;
         }
 

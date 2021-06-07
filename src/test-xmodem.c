@@ -83,23 +83,33 @@ void *rx_looper(void *ext) {
     q->buff = buffer;
     q->mask = sizeof (buffer) - 1;
     while (*args->run) {
-        unsigned int fit = (q->mask + q->tail - q->head) & q->mask;
-        if (q->head >= q->tail) { fit = 1 + q->mask - q->head; } /* how much fits to top of queue */
-        else { fit = q->tail - q->head - 1; }
-        if (fit) {
-            int n_read = read(args->fd, &q->buff[q->head], fit);
-            if (args->verbose) {
-                for (int i = 0; i < n_read; ++i) {
-                    uint8_t byte = q->buff[(q->head + i) & q->mask];
-                    if (args->verbose) { printf("%2.2x ", byte); }
+        fd_set fds;
+        FD_ZERO (&fds);
+        FD_SET (args->fd, &fds);
+        sigset_t orig_mask; /* TODO huh? */
+        int res = pselect (args->fd + 1, &fds, NULL, NULL, NULL, &orig_mask);
+        if (FD_ISSET(args->fd, &fds)) {
+            unsigned int fit = (q->mask + q->tail - q->head) & q->mask;
+            if (q->head >= q->tail) { fit = 1 + q->mask - q->head; } /* how much fits to top of queue */
+            else { fit = q->tail - q->head - 1; }
+            if (fit) {
+                int n_read = read(args->fd, &q->buff[q->head], fit);
+                if (args->verbose) {
+                    for (int i = 0; i < n_read; ++i) {
+                        uint8_t byte = q->buff[(q->head + i) & q->mask];
+                        if (args->verbose) { printf("%2.2x ", byte); }
+                    }
+                    if (n_read > 0) { printf("\n"); }
                 }
-                if (n_read > 0) { printf("\n"); }
+                q->head = (q->head + n_read) & q->mask;
             }
-            q->head = (q->head + n_read) & q->mask;
         }
+#ifdef SLEEP_NOT_SELECT
         struct timespec remaining, request = {0, 1000000};
         nanosleep(&request, &remaining);
+#endif
     }
+
     return NULL;
 }
 
@@ -225,6 +235,8 @@ int main(int argc, char **argv) {
     while (1) {
         sleep(1);
     }
+
+    pthread_join(rx_thread, NULL);
 
     return 0;
 }

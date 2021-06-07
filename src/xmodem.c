@@ -143,6 +143,46 @@ static int get_filesize(char const * const filename)
 }
 #endif
 
+int xmodem_recv(GenericDevice *src, GenericDevice *dst, XmodemOptions *options, int *errors)
+{
+    dst->putc(&dst->fd, options->packet_size_code, options->timeout_ms);
+
+    const unsigned int header_size = 3;
+    const unsigned int footer_size = (options->crc_checksum == CHECKSUM_OPTION_CRC) ? 2 : 1;
+    uint8_t expected_packet_id = 1;
+
+    const unsigned int expected_packet_size = options->packet_size + header_size + footer_size;
+    unsigned int n_read, n_write;
+    int success, done = 0;
+    do {
+        while (1) { /* loop over incoming packets */
+            success = 0;
+            n_read = src->recv(&src->fd, xmodem_holding_buffer, expected_packet_size, 0, options->timeout_ms);
+            uint8_t packet_id = xmodem_holding_buffer[1];
+            do {
+                if ((n_read == 1) && (xmodem_holding_buffer[0] == XMODEM_EOT)) {
+                    n_write = src->putc(&src->fd, XMODEM_CAN, options->timeout_ms);
+                    n_write = src->putc(&src->fd, XMODEM_CAN, options->timeout_ms);
+                    n_write = src->putc(&src->fd, XMODEM_CAN, options->timeout_ms);
+                    done = 1;
+                    break;
+                }
+                if (n_read != expected_packet_size) { break; }
+                if (packet_id != expected_packet_id) { break; }
+                if (xmodem_holding_buffer[2] != ~packet_id) { break; }
+                uint16_t expected_crc = crc16(&xmodem_holding_buffer[3], options->packet_size);
+                uint8_t crc_hi = xmodem_holding_buffer[3 + options->packet_size + 0];
+                uint8_t crc_lo = xmodem_holding_buffer[3 + options->packet_size + 1];
+                uint16_t crc = (crc_hi << 8) | (crc_lo);
+                if (crc != expected_crc) { break; }
+                success = 1;
+            } while (0);
+            expected_packet_id = packet_id + 1;
+            src->putc(&src->fd, success ? XMODEM_ACK : XMODEM_NAK, options->timeout_ms);
+        }
+    } while (success && (done == 0));
+}
+
 /*
  * @param
  *     options->packet_size_code = { XMODEM_SOH (128-byte packets), XMODEM_STX (1024-byte packets)

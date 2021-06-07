@@ -31,5 +31,6 @@ enum {
 };
 
 int xmodem_send(GenericDevice *src, GenericDevice *dst, XmodemOptions *options, int *errors);
+int xmodem_recv(GenericDevice *src, GenericDevice *dst, XmodemOptions *options, int *errors);
 
 #endif

@@ -10,7 +10,7 @@ typedef struct {
     int (*getc)(void *handle, uint8_t *ch, unsigned int timeout);
     int (*putc)(void *handle, uint8_t ch, unsigned int timeout);
     int (*size)(void *handle, unsigned int timeout);
-    const char *name;
+    char name[128];
     void *handle;
 } GenericDevice;
 
@@ -32,5 +32,16 @@ enum {
 
 int xmodem_send(GenericDevice *src, GenericDevice *dst, XmodemOptions *options, int *errors);
 int xmodem_recv(GenericDevice *src, GenericDevice *dst, XmodemOptions *options, int *errors);
+
+/* Synchronization Characters */
+#define XMODEM_SOH (0x01)
+#define XMODEM_STX (0x02)
+#define XMODEM_EOT (0x04)
+#define XMODEM_ACK (0x06)
+#define XMODEM_NAK (0x15)
+#define XMODEM_CAN (0x18)
+#define XMODEM_CTZ (0x1A)
+#define XMODEM_NUL (0x00)
+#define XMODEM_CCC (0x43)
 
 #endif

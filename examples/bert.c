@@ -110,56 +110,95 @@ int putc_over_uart(void *handle, uint8_t byte, unsigned int timeout) {
 
 int main(int argc, char **argv) {
     XmodemOptions options;
-    GenericDevice i_device, o_device;
-    i_device.recv = recv_from_file;
-    i_device.size = size_from_file;
+    GenericDevice device;
 
-    o_device.recv = recv_from_uart;
-    o_device.send = send_over_uart;
-    o_device.getc = getc_from_uart;
-    o_device.putc = putc_over_uart;
+    device.recv = recv_from_uart;
+    device.send = send_over_uart;
+    device.getc = getc_from_uart;
+    device.putc = putc_over_uart;
 
     int verbose = 0;
 
     for (int i = 0; i < argc; ++i) {
         if (strcmp(argv[i], "-verbose") == 0) {
             verbose = 1;
-        } else if (strcmp(argv[i], "-i") == 0) {
-            snprintf(i_device.name, sizeof (i_device.name), "%s", argv[++i]);
-            i_device.fd = open(i_device.name, S_IREAD, O_RDWR);
         } else if (strcmp(argv[i], "-d") == 0) {
-            snprintf(o_device.name, sizeof (o_device.name), "%s", argv[++i]);
-            o_device.fd = initialize_serial_port(o_device.name, 115200, 0, 0, 0);
-        } else if (strcmp(argv[i], "-o") == 0) {
+            snprintf(device.name, sizeof (device.name), "%s", argv[++i]);
+            device.fd = initialize_serial_port(device.name, 115200, 0, 0, 0);
         }
     }
 
-    uint8_t buff[32];
-    write(o_device.fd, "<xmodem s RADIO9.BIN\r", 5);
-//    int n_read = read(o_device.fd, buff, sizeof (buff));
+    /* analysis variables */
+    uint8_t analysis_buff[32 * 1024];
+    Queue analysis_queue;
+    memset(&analysis_queue, 0, sizeof (analysis_queue));
+    analysis_queue.buff = analysis_buff;
+    analysis_queue.mask = sizeof (analysis_buff) - 1;
+    uint32_t error_hist[9];
+    memset(error_hist, 0, sizeof (error_hist));
 
     RxLooperArgs rx_looper_args;
     Queue rx_queue;
     memset(&rx_looper_args, 0, sizeof(RxLooperArgs));
 
+    uint8_t rx_buff[512];
+    rx_queue.buff = rx_buff;
+    rx_queue.mask = sizeof (rx_buff);
     unsigned int run = 1;
-    rx_looper_args.queue = &rx_queue;
+    rx_looper_args.queue = &analysis_queue;
     rx_looper_args.run = &run;
     rx_looper_args.verbose = verbose;
+    rx_looper_args.fd = device.fd;
     pthread_t rx_thread;
 
     pthread_create(&rx_thread, NULL, rx_looper, (void *) &rx_looper_args); /* create thread */
 
-    int errors = 0;
-    options.timeout_ms = 100000;
-    options.max_retries = 25000;
-    options.max_retransmissions = 25000;
-    options.packet_size_code = XMODEM_CCC;
-    options.packet_size = 1024;
-    xmodem_recv(&o_device, &i_device, &options, &errors);
+    unsigned int trigger_level = 16; /* effective size of test */
+    uint32_t total_bytes_read = 0;
+    unsigned int trigger_start = 64;
+    uint32_t byte_errors = 0;
+    uint32_t bit_errors = 0;
+    time_t next_time = 0;
 
     while (1) {
-        sleep(1);
+        Queue *q = &analysis_queue;
+        unsigned int room = (q->mask + q->tail - q->head) & q->mask;
+        // if (q->head >= q->tail) { room = 1 + q->mask - q->head; } /* how much fits to top of queue */
+
+        // q = &rx_queue;
+        int n_read = (q->head - q->tail) & q->mask;
+        total_bytes_read += n_read;
+        if (total_bytes_read < (trigger_start + 2 * trigger_level)) {
+            q->tail = (q->tail + n_read) & q->mask;
+            printf("%d bytes read\n", total_bytes_read);
+            sleep(1);
+            continue;
+        }
+
+        /* accumulate statistics */
+        for (int i = 0; i < n_read; ++i) {
+            uint8_t byte1 = q->buff[(q->head + i - 2 * trigger_level) & q->mask];
+            uint8_t byte2 = q->buff[(q->head + i - 1 * trigger_level) & q->mask];
+            uint8_t diff = byte1 ^ byte2;
+            int n_errors = 0;
+            uint8_t mask = 0x01;
+            printf("mask, diff = %x %x = %x ^ %x\n", mask, diff, byte1, byte2);
+            for (int j = 0; j < 8; ++j, mask <<= 1) {
+                if (mask & diff) { ++n_errors; }
+            }
+            ++error_hist[n_errors];
+            bit_errors += n_errors;
+            if (n_errors) { ++byte_errors; }
+        }
+        q->tail = (q->tail + n_read) & q->mask;
+        time_t now = time(0);
+        if (now && (now > next_time)) {
+            next_time = now + 1;
+            printf("statistics: total bytes read %6d. byte errors = %6d. bit errors = %6d => %5d %5d %5d %5d %5d %5d %5d %5d %5d\n",
+                   total_bytes_read, byte_errors, bit_errors, error_hist[0],
+                   error_hist[1], error_hist[2], error_hist[3], error_hist[4], error_hist[5], error_hist[6], error_hist[7], error_hist[8]);
+        }
+        // printf("%d characters read thus far\n", q->head);
     }
 
     pthread_join(rx_thread, NULL);

@@ -65,17 +65,6 @@ static uint16_t crc16(uint8_t const * const ptr, int count) {
 #define XMODEM_C          ('C')
 #endif
 
-/* Synchronization Characters */
-#define XMODEM_SOH (0x01)
-#define XMODEM_STX (0x02)
-#define XMODEM_EOT (0x04)
-#define XMODEM_ACK (0x06)
-#define XMODEM_NAK (0x15)
-#define XMODEM_CAN (0x18)
-#define XMODEM_CTZ (0x1A)
-#define XMODEM_NUL (0x00)
-#define XMODEM_CCC (0x43)
-
 /* Delays/Timeouts */
 #define XMODEM_DELAY_TOKEN (100)
 #define XMODEM_DELAY_1S (1000)
@@ -145,7 +134,7 @@ static int get_filesize(char const * const filename)
 
 int xmodem_recv(GenericDevice *src, GenericDevice *dst, XmodemOptions *options, int *errors)
 {
-    dst->putc(&dst->fd, options->packet_size_code, options->timeout_ms);
+    src->putc(&src->fd, options->packet_size_code, options->timeout_ms);
 
     const unsigned int header_size = 3;
     const unsigned int footer_size = (options->crc_checksum == CHECKSUM_OPTION_CRC) ? 2 : 1;
@@ -157,7 +146,14 @@ int xmodem_recv(GenericDevice *src, GenericDevice *dst, XmodemOptions *options, 
     do {
         while (1) { /* loop over incoming packets */
             success = 0;
-            n_read = src->recv(&src->fd, xmodem_holding_buffer, expected_packet_size, 0, options->timeout_ms);
+            n_read = 0;
+            int remaining = expected_packet_size;
+            int index = 0;
+            do {
+                n_read = src->recv(&src->fd, &xmodem_holding_buffer[index], remaining, 0, options->timeout_ms);
+                remaining -= n_read;
+                index += n_read;
+            } while ((remaining > 0) && (1)); /* TODO timeout */
             uint8_t packet_id = xmodem_holding_buffer[1];
             do {
                 if ((n_read == 1) && (xmodem_holding_buffer[0] == XMODEM_EOT)) {

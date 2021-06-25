@@ -59,8 +59,8 @@ int recv_from_uart(void *handle, uint8_t *b, unsigned int n, unsigned int offset
     clock_gettime(CLOCK_MONOTONIC, &spec);
     expiry.tv_sec = spec.tv_sec;
     expiry.tv_nsec = spec.tv_nsec + timeout * 1e6;
-    if (expiry.tv_nsec > 1e9) {
-        expiry.tv_nsec -= 1e9;
+    if (expiry.tv_nsec > 1000000000) {
+        expiry.tv_nsec -= 1000000000;
         ++expiry.tv_sec;
     }
 
@@ -88,8 +88,8 @@ int send_over_uart(void *handle, uint8_t *b, unsigned int n, unsigned int timeou
     clock_gettime(CLOCK_MONOTONIC, &spec);
     expiry.tv_sec = spec.tv_sec;
     expiry.tv_nsec = spec.tv_nsec + timeout * 1e6;
-    if (expiry.tv_nsec > 1e9) {
-        expiry.tv_nsec -= 1e9;
+    if (expiry.tv_nsec > 1000000000) {
+        expiry.tv_nsec -= 1000000000;
         ++expiry.tv_sec;
     }
 
@@ -108,6 +108,8 @@ int putc_over_uart(void *handle, uint8_t byte, unsigned int timeout) {
     return send_over_uart(handle, &byte, 1, timeout);
 }
 
+uint8_t analysis_buff[1024 * 1024];
+
 int main(int argc, char **argv) {
     XmodemOptions options;
     GenericDevice device;
@@ -124,12 +126,15 @@ int main(int argc, char **argv) {
             verbose = 1;
         } else if (strcmp(argv[i], "-d") == 0) {
             snprintf(device.name, sizeof (device.name), "%s", argv[++i]);
-            device.fd = initialize_serial_port(device.name, 115200, 0, 0, 0);
+            device.fd = initialize_serial_port(device.name, 230400, 0, 0, 0);
         }
     }
 
+    const char command[] = "<diagnostics -bert 1\r";
+    write(device.fd, command, sizeof (command) - 1);
+
     /* analysis variables */
-    uint8_t analysis_buff[32 * 1024];
+    uint8_t pattern_buff[1024];
     Queue analysis_queue;
     memset(&analysis_queue, 0, sizeof (analysis_queue));
     analysis_queue.buff = analysis_buff;
@@ -159,22 +164,61 @@ int main(int argc, char **argv) {
     uint32_t byte_errors = 0;
     uint32_t bit_errors = 0;
     time_t next_time = 0;
+    unsigned int pattern_trapped = 0;
+    int index;
 
     while (1) {
         Queue *q = &analysis_queue;
         unsigned int room = (q->mask + q->tail - q->head) & q->mask;
         // if (q->head >= q->tail) { room = 1 + q->mask - q->head; } /* how much fits to top of queue */
 
-        // q = &rx_queue;
         int n_read = (q->head - q->tail) & q->mask;
         total_bytes_read += n_read;
-        if (total_bytes_read < (trigger_start + 2 * trigger_level)) {
+        unsigned int test_start = (trigger_start + 2 * trigger_level);
+        unsigned int test_start_index = test_start & q->mask;
+        if (total_bytes_read < test_start) {
             q->tail = (q->tail + n_read) & q->mask;
             printf("%d bytes read\n", total_bytes_read);
             sleep(1);
             continue;
         }
 
+        if (pattern_trapped == 0) { /* trap expected pattern */
+            q->tail = trigger_start & q->mask;
+            for (int i = 0; i < trigger_level; ++i) {
+                pattern_buff[i] = q->buff[q->tail];
+                q->tail = (q->tail + 1) & q->mask;
+            }
+            pattern_trapped = 1;
+        }
+
+        while (q->tail != q->mask) {
+            uint8_t byte1 = q->buff[q->tail & q->mask];
+            uint8_t byte2 = pattern_buff[index];
+            index = (index + 1) & 1023; /* JSV TODO DEBUG */
+            q->tail = (q->tail + 1) & q->mask;
+            uint8_t diff = byte1 ^ byte2;
+            int n_errors = 0;
+            uint8_t mask = 0x01;
+            printf("mask, diff = %x %x = %x ^ %x\n", mask, diff, byte1, byte2);
+            for (int j = 0; j < 8; ++j, mask <<= 1) {
+                if (mask & diff) { ++n_errors; }
+            }
+            ++error_hist[n_errors];
+            bit_errors += n_errors;
+            if (n_errors) { ++byte_errors; }
+
+            time_t now = time(0);
+            if (now && (now > next_time)) {
+                next_time = now + 1;
+                printf("statistics: total bytes read %6d. byte errors = %6d. bit errors = %6d => %5d %5d %5d %5d %5d %5d %5d %5d %5d\n",
+                       total_bytes_read, byte_errors, bit_errors, error_hist[0],
+                       error_hist[1], error_hist[2], error_hist[3], error_hist[4], error_hist[5], error_hist[6], error_hist[7], error_hist[8]);
+            }
+
+        }
+
+#if 0
         /* accumulate statistics */
         for (int i = 0; i < n_read; ++i) {
             uint8_t byte1 = q->buff[(q->head + i - 2 * trigger_level) & q->mask];
@@ -191,14 +235,9 @@ int main(int argc, char **argv) {
             if (n_errors) { ++byte_errors; }
         }
         q->tail = (q->tail + n_read) & q->mask;
-        time_t now = time(0);
-        if (now && (now > next_time)) {
-            next_time = now + 1;
-            printf("statistics: total bytes read %6d. byte errors = %6d. bit errors = %6d => %5d %5d %5d %5d %5d %5d %5d %5d %5d\n",
-                   total_bytes_read, byte_errors, bit_errors, error_hist[0],
-                   error_hist[1], error_hist[2], error_hist[3], error_hist[4], error_hist[5], error_hist[6], error_hist[7], error_hist[8]);
-        }
         // printf("%d characters read thus far\n", q->head);
+#endif
+
     }
 
     pthread_join(rx_thread, NULL);

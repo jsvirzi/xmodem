@@ -6,7 +6,7 @@
 typedef struct {
     int fd;
     int (*recv)(void *handle, uint8_t *dst, unsigned int n, unsigned int offset, unsigned int timeout);
-    int (*send)(void *handle, uint8_t *src, unsigned int n, unsigned int timeout);
+    int (*send)(void *handle, uint8_t const *src, unsigned int n, unsigned int timeout);
     int (*getc)(void *handle, uint8_t *ch, unsigned int timeout);
     int (*putc)(void *handle, uint8_t ch, unsigned int timeout);
     int (*size)(void *handle, unsigned int timeout);

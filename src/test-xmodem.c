@@ -52,7 +52,7 @@ static int timeout_expired(struct timespec const * const timeout) {
     return ((now.tv_nsec >= timeout->tv_nsec) ? 1 : 0);
 }
 
-int recv_from_uart(void *handle, uint8_t *b, unsigned int n, unsigned int offset, unsigned int timeout) {
+int recv_from_desc(void *handle, uint8_t *b, unsigned int n, unsigned int offset, unsigned int timeout) {
 
     /* calculate timeout */
     struct timespec spec, expiry;
@@ -76,11 +76,12 @@ int recv_from_uart(void *handle, uint8_t *b, unsigned int n, unsigned int offset
     return index; /* how many were read */
 }
 
-int getc_from_uart(void *handle, uint8_t *byte, unsigned int timeout) {
-    return recv_from_uart(handle, byte, 1, 0, timeout);
+int getc_from_desc(void *handle, uint8_t *byte, unsigned int timeout) {
+    return recv_from_file(handle, byte, 1, 0, timeout);
 }
 
-int send_over_uart(void *handle, uint8_t *b, unsigned int n, unsigned int timeout) {
+#define ONE_BILLION (1000000000L)
+int send_over_desc(void *handle, uint8_t const * const b, unsigned int n, unsigned int timeout) {
     int fd = * (int *) handle;
 
     /* calculate timeout */
@@ -88,8 +89,8 @@ int send_over_uart(void *handle, uint8_t *b, unsigned int n, unsigned int timeou
     clock_gettime(CLOCK_MONOTONIC, &spec);
     expiry.tv_sec = spec.tv_sec;
     expiry.tv_nsec = spec.tv_nsec + timeout * 1e6;
-    if (expiry.tv_nsec > 1e9) {
-        expiry.tv_nsec -= 1e9;
+    if (expiry.tv_nsec > ONE_BILLION) {
+        expiry.tv_nsec -= ONE_BILLION;
         ++expiry.tv_sec;
     }
 
@@ -104,40 +105,83 @@ int send_over_uart(void *handle, uint8_t *b, unsigned int n, unsigned int timeou
     return index; /* how many went out */
 }
 
-int putc_over_uart(void *handle, uint8_t byte, unsigned int timeout) {
-    return send_over_uart(handle, &byte, 1, timeout);
+int putc_over_desc(void *handle, uint8_t byte, unsigned int timeout) {
+    return send_over_desc(handle, &byte, 1, timeout);
 }
+
+enum {
+    DirectionTx = 0,
+    DirectionSend = DirectionTx,
+    DirectionRx,
+    DirectionRecv = DirectionRx,
+    Directions
+};
+
+enum {
+    TcpModeServer = 0,
+    TcpModeClient,
+    TcpModes
+};
 
 int main(int argc, char **argv) {
     XmodemOptions options;
     GenericDevice i_device, o_device;
+
     i_device.recv = recv_from_file;
     i_device.size = size_from_file;
 
-    o_device.recv = recv_from_uart;
-    o_device.send = send_over_uart;
-    o_device.getc = getc_from_uart;
-    o_device.putc = putc_over_uart;
+    o_device.recv = recv_from_desc;
+    o_device.send = send_over_desc;
+    o_device.getc = getc_from_desc;
+    o_device.putc = putc_over_desc;
 
     int verbose = 0;
+    int direction = Directions; /* invalid value */
+    int mode = TcpModes;
+    int port = 0;
+    TcpServerInfo tcp_server_info;
+    TcpClientInfo tcp_client_info;
+
+    initialize_tcp_server_info(&tcp_server_info);
+    initialize_tcp_client_info(&tcp_client_info);
 
     for (int i = 0; i < argc; ++i) {
         if (strcmp(argv[i], "-verbose") == 0) {
             verbose = 1;
+        } else if ((strcmp(argv[i], "-s") == 0) || (strcmp(argv[i], "--send") == 0)) {
+            direction = DirectionSend;
+        } else if ((strcmp(argv[i], "-r") == 0) || (strcmp(argv[i], "--receive") == 0)) {
+            direction = DirectionRecv;
         } else if (strcmp(argv[i], "-i") == 0) {
             snprintf(i_device.name, sizeof (i_device.name), "%s", argv[++i]);
             i_device.fd = open(i_device.name, S_IREAD, O_RDWR);
         } else if (strcmp(argv[i], "-d") == 0) {
             snprintf(o_device.name, sizeof (o_device.name), "%s", argv[++i]);
-            o_device.fd = initialize_serial_port(o_device.name, 115200, 0, 0, 0);
-        } else if (strcmp(argv[i], "-o") == 0) {
+        } else if (strcmp(argv[i], "-server") == 0) {
+            mode = TcpModeServer;
+        } else if (strcmp(argv[i], "-client") == 0) {
+            mode = TcpModeClient;
+        } else if (
+            (strcmp(argv[i], "-p") == 0) ||
+            (strcmp(argv[i], "--port") == 0)) {
+            port = atoi(argv[++i]);
         }
     }
 
-    uint8_t buff[32];
-    write(o_device.fd, "<xmodem s RADIO9.BIN\r", 5);
-//    int n_read = read(o_device.fd, buff, sizeof (buff));
+    if (direction == Directions) {
+        printf("must specify -r(eceive) or -s(end)\n");
+        return -1;
+    }
 
+    /* open device */
+    if (strlen(o_device.name)) {
+        o_device.fd = initialize_serial_port(o_device.name, 115200, 0, 0, 0);
+    } else if (mode == TcpModeServer) {
+        initialize_server_socket(&tcp_server_info, port);
+        server_task(&tcp_server_info);
+    }
+
+    /*** receive machine ***/
     RxLooperArgs rx_looper_args;
     Queue rx_queue;
     memset(&rx_looper_args, 0, sizeof(RxLooperArgs));
@@ -150,13 +194,21 @@ int main(int argc, char **argv) {
 
     pthread_create(&rx_thread, NULL, rx_looper, (void *) &rx_looper_args); /* create thread */
 
+    if (direction == DirectionSend) {
+        const char *start_command = "<xmodem r RADIO9.BIN\r";
+        write(o_device.fd, start_command, sizeof (start_command) - 1);
+    } else if (direction == DirectionRecv) {
+        const char *start_command = "<xmodem s RADIO9.BIN\r";
+        write(o_device.fd, start_command, sizeof (start_command) - 1);
+    }
+
     int errors = 0;
     options.timeout_ms = 100000;
     options.max_retries = 25000;
     options.max_retransmissions = 25000;
     options.packet_size_code = XMODEM_CCC;
     options.packet_size = 1024;
-    xmodem_recv(&o_device, &i_device, &options, &errors);
+    // xmodem_recv(&o_device, &i_device, &options, &errors);
 
     while (1) {
         sleep(1);

@@ -13,6 +13,7 @@ typedef struct {
 
 typedef struct {
     int portno;
+    int client_fd;
 } TcpClientInfo;
 
 void initialize_tcp_server_info(TcpServerInfo *info);

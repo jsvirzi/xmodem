@@ -19,5 +19,6 @@ typedef struct RxLooperArgs {
 
 void *rx_looper(void *ext);
 void *server_task(void *arg);
+void *client_task(void *arg);
 
 #endif

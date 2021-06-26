@@ -127,6 +127,9 @@ int main(int argc, char **argv) {
     XmodemOptions options;
     GenericDevice i_device, o_device;
 
+    o_device.name[0] = 0;
+    i_device.name[0] = 0;
+
     i_device.recv = recv_from_file;
     i_device.size = size_from_file;
 
@@ -139,11 +142,6 @@ int main(int argc, char **argv) {
     int direction = Directions; /* invalid value */
     int mode = TcpModes;
     int port = 0;
-    TcpServerInfo tcp_server_info;
-    TcpClientInfo tcp_client_info;
-
-    initialize_tcp_server_info(&tcp_server_info);
-    initialize_tcp_client_info(&tcp_client_info);
 
     for (int i = 0; i < argc; ++i) {
         if (strcmp(argv[i], "-verbose") == 0) {
@@ -174,11 +172,19 @@ int main(int argc, char **argv) {
     }
 
     /* open device */
+    TcpServerInfo tcp_server_info;
+    TcpClientInfo tcp_client_info;
+
     if (strlen(o_device.name)) {
         o_device.fd = initialize_serial_port(o_device.name, 115200, 0, 0, 0);
     } else if (mode == TcpModeServer) {
+        initialize_tcp_server_info(&tcp_server_info);
         initialize_server_socket(&tcp_server_info, port);
         server_task(&tcp_server_info);
+    } else if (mode == TcpModeClient) {
+        initialize_tcp_client_info(&tcp_client_info);
+        tcp_client_info.portno = port;
+        client_task(&tcp_client_info);
     }
 
     /*** receive machine ***/
@@ -190,10 +196,16 @@ int main(int argc, char **argv) {
     rx_looper_args.queue = &rx_queue;
     rx_looper_args.run = &run;
     rx_looper_args.verbose = verbose;
+    if (mode == TcpModeClient) {
+        rx_looper_args.fd = tcp_client_info.client_fd;
+    } else if (mode == TcpModeServer) {
+        rx_looper_args.fd = tcp_server_info.client_fd;
+    }
     pthread_t rx_thread;
 
     pthread_create(&rx_thread, NULL, rx_looper, (void *) &rx_looper_args); /* create thread */
 
+#if 0
     if (direction == DirectionSend) {
         const char *start_command = "<xmodem r RADIO9.BIN\r";
         write(o_device.fd, start_command, sizeof (start_command) - 1);
@@ -209,9 +221,21 @@ int main(int argc, char **argv) {
     options.packet_size_code = XMODEM_CCC;
     options.packet_size = 1024;
     // xmodem_recv(&o_device, &i_device, &options, &errors);
+#endif
 
     while (1) {
         sleep(1);
+        if (mode == TcpModeClient) {
+            printf("\nreceived: ");
+            while (rx_queue.tail != rx_queue.head) {
+                uint8_t byte = rx_queue.buff[rx_queue.tail];
+                rx_queue.tail = (rx_queue.tail + 1) & rx_queue.mask;
+                printf("%2.2x %c", byte, byte);
+            }
+        } else if (mode == TcpModeServer) {
+            const char *str = "hello, world\n";
+            write(tcp_server_info.client_fd, str, sizeof (str));
+        }
     }
 
     pthread_join(rx_thread, NULL);

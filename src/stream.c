@@ -6,7 +6,8 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/unistd.h>
-
+#include <sys/socket.h>
+#include <arpa/inet.h>
 #include <netdb.h>
 #include <netinet/in.h>
 
@@ -85,7 +86,7 @@ void *server_task(void *arg)
 {
     TcpServerInfo *info = (TcpServerInfo *) arg;
 
-    while (1) {
+    do {
 
         struct sockaddr_in cli_addr;
         int clilen = sizeof(cli_addr);
@@ -98,5 +99,29 @@ void *server_task(void *arg)
             continue;
         }
 
+    } while (0);
+}
+
+void *client_task(void *ext) {
+    TcpClientInfo *info = (TcpClientInfo *) ext;
+
+    /* First call to socket() function */
+    info->client_fd = socket(AF_INET, SOCK_STREAM, 0);
+
+    struct sockaddr_in serv_addr;
+    serv_addr.sin_family = AF_INET;
+    serv_addr.sin_port = htons(info->portno);
+
+    // Convert IPv4 and IPv6 addresses from text to binary form
+    if(inet_pton(AF_INET, "127.0.0.1", &serv_addr.sin_addr) <= 0) {
+        printf("\nInvalid address/ Address not supported \n");
+        return 0;
     }
+
+    if (connect(info->client_fd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0)
+    {
+        printf("\nConnection Failed \n");
+        return 0;
+    }
+
 }

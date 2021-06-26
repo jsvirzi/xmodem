@@ -14,35 +14,6 @@
 #include "ports.h"
 #include "stream.h"
 
-#if 0
-
-void *server_looper(void *ext) {
-
-
-    /* If connection is established then start communicating */
-    char buffer[256];
-    bzero(buffer, sizeof (buffer));
-    int n = read(info->client_fd, buffer, sizeof (buffer) - 1);
-
-    if (n < 0) {
-        perror("ERROR reading from socket");
-        exit(1);
-    }
-
-    printf("Here is the message: %s\n",buffer);
-
-    /* Write a response to the client */
-    n = write(info->client_fd,"I got your message",18);
-
-    if (n < 0) {
-        perror("ERROR writing to socket");
-        exit(1);
-    }
-
-}
-
-#endif
-
 void *rx_looper(void *ext) {
     RxLooperArgs *args = (RxLooperArgs *) ext;
     Queue *q = args->queue;
@@ -92,9 +63,9 @@ void *server_task(void *arg)
         int clilen = sizeof(cli_addr);
 
         /* accept connection from client */
-        info->client_fd = accept(info->server_fd, (struct sockaddr *) &cli_addr, &clilen);
+        info->infrastructure.fd = accept(info->server_fd, (struct sockaddr *) &cli_addr, &clilen);
 
-        if (info->client_fd < 0) {
+        if (info->infrastructure.fd < 0) {
             perror("ERROR on accept");
             continue;
         }
@@ -106,11 +77,11 @@ void *client_task(void *ext) {
     TcpClientInfo *info = (TcpClientInfo *) ext;
 
     /* First call to socket() function */
-    info->client_fd = socket(AF_INET, SOCK_STREAM, 0);
+    info->infrastructure.fd = socket(AF_INET, SOCK_STREAM, 0);
 
     struct sockaddr_in serv_addr;
     serv_addr.sin_family = AF_INET;
-    serv_addr.sin_port = htons(info->portno);
+    serv_addr.sin_port = htons(info->infrastructure.portno);
 
     // Convert IPv4 and IPv6 addresses from text to binary form
     if(inet_pton(AF_INET, "127.0.0.1", &serv_addr.sin_addr) <= 0) {
@@ -118,10 +89,95 @@ void *client_task(void *ext) {
         return 0;
     }
 
-    if (connect(info->client_fd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0)
+    if (connect(info->infrastructure.fd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0)
     {
         printf("\nConnection Failed \n");
         return 0;
     }
 
+}
+
+int recv_from_file(void *handle, uint8_t *b, unsigned int n, unsigned int offset, unsigned int timeout) {
+    int fd = * (int *) handle;
+    unsigned int remaining = n;
+    if (offset) { printf("read from offset not supported\n"); }
+    do {
+        int n_read = read(fd, b, remaining);
+        remaining -= n_read;
+        b += n_read;
+    } while (remaining >= 0);
+}
+
+int size_from_file(void *handle, unsigned int timeout) {
+    int fd = * (int *) handle;
+    unsigned int size = lseek(fd, 0, SEEK_END);
+    close(fd);
+    return size;
+}
+
+/* @brief returns 1 if current time exceeds the time specified by timeout. 0 otherwise */
+static int timeout_expired(struct timespec const * const timeout) {
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    if (now.tv_sec != timeout->tv_sec) {
+        return ((now.tv_sec > timeout->tv_sec) ? 1 : 0);
+    }
+    return ((now.tv_nsec >= timeout->tv_nsec) ? 1 : 0);
+}
+
+int recv_from_desc(void *handle, uint8_t *b, unsigned int n, unsigned int offset, unsigned int timeout) {
+
+    /* calculate timeout */
+    struct timespec spec, expiry;
+    clock_gettime(CLOCK_MONOTONIC, &spec);
+    expiry.tv_sec = spec.tv_sec;
+    expiry.tv_nsec = spec.tv_nsec + timeout * 1e6;
+    if (expiry.tv_nsec > 1e9) {
+        expiry.tv_nsec -= 1e9;
+        ++expiry.tv_sec;
+    }
+
+    /* read (max) n bytes from queue before timeout */
+    Queue *q = (Queue *) handle;
+    unsigned int index = 0;
+    while ((q->head != q->tail) && (index <= n) && (timeout_expired(&expiry) == 0)) {
+        b[index] = q->buff[q->tail];
+        q->tail = (q->tail + 1) & q->mask;
+        ++index;
+    }
+
+    return index; /* how many were read */
+}
+
+int getc_from_desc(void *handle, uint8_t *byte, unsigned int timeout) {
+    return recv_from_desc(handle, byte, 1, 0, timeout);
+}
+
+#define ONE_BILLION (1000000000L)
+int send_over_desc(void *handle, uint8_t const * const b, unsigned int n, unsigned int timeout) {
+    int fd = * (int *) handle;
+
+    /* calculate timeout */
+    struct timespec spec, expiry;
+    clock_gettime(CLOCK_MONOTONIC, &spec);
+    expiry.tv_sec = spec.tv_sec;
+    expiry.tv_nsec = spec.tv_nsec + timeout * 1e6;
+    if (expiry.tv_nsec > ONE_BILLION) {
+        expiry.tv_nsec -= ONE_BILLION;
+        ++expiry.tv_sec;
+    }
+
+    unsigned int index = 0;
+    unsigned int remaining = n;
+    do {
+        int n_write = write(fd, &b[index], remaining);
+        remaining -= n_write;
+        index += n_write;
+    } while ((index <= n) && (timeout_expired(&expiry) == 0));
+
+    return index; /* how many went out */
+}
+
+int putc_over_desc(void *handle, uint8_t byte, unsigned int timeout) {
+    return send_over_desc(handle, &byte, 1, timeout);
 }

@@ -77,7 +77,7 @@ int recv_from_desc(void *handle, uint8_t *b, unsigned int n, unsigned int offset
 }
 
 int getc_from_desc(void *handle, uint8_t *byte, unsigned int timeout) {
-    return recv_from_file(handle, byte, 1, 0, timeout);
+    return recv_from_desc(handle, byte, 1, 0, timeout);
 }
 
 #define ONE_BILLION (1000000000L)
@@ -224,17 +224,18 @@ int main(int argc, char **argv) {
 #endif
 
     while (1) {
+        int n;
+        char buff[64];
         sleep(1);
         if (mode == TcpModeClient) {
             printf("\nreceived: ");
-            while (rx_queue.tail != rx_queue.head) {
-                uint8_t byte = rx_queue.buff[rx_queue.tail];
-                rx_queue.tail = (rx_queue.tail + 1) & rx_queue.mask;
-                printf("%2.2x %c", byte, byte);
+            n = recv_from_desc(&rx_queue, buff, sizeof (buff), 0, 0);
+            for (int i = 0; i < n; ++i) {
+                printf("%2.2x %c", buff[i], buff[i]);
             }
         } else if (mode == TcpModeServer) {
             const char *str = "hello, world\n";
-            write(tcp_server_info.client_fd, str, sizeof (str));
+            send_over_desc(&tcp_server_info.client_fd, str, sizeof (str), 0);
         }
     }
 

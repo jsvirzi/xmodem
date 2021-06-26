@@ -4,16 +4,19 @@
 int initialize_serial_port(const char *dev, unsigned int baud, unsigned int canonical, int parity, int min_chars);
 
 typedef struct {
+    int fd;
+    int portno;
+} TcpInfo;
+
+typedef struct {
     int server_fd;
     unsigned int max_clients;
-    int client_fd;
     int *client_fds;
-    int portno;
+    TcpInfo infrastructure;
 } TcpServerInfo;
 
 typedef struct {
-    int portno;
-    int client_fd;
+    TcpInfo infrastructure;
 } TcpClientInfo;
 
 void initialize_tcp_server_info(TcpServerInfo *info);

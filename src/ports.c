@@ -58,7 +58,7 @@ int initialize_serial_port(const char *dev, unsigned int baud, unsigned int cano
 void initialize_tcp_server_info(TcpServerInfo *info) {
     memset(info, 0, sizeof (TcpServerInfo));
     info->max_clients = 1;
-    info->client_fds = &info->client_fd;
+    info->client_fds = &info->infrastructure.fd;
 }
 
 void initialize_tcp_client_info(TcpClientInfo *info) {

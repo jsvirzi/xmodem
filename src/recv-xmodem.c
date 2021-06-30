@@ -24,6 +24,8 @@
 #include "ports.h"
 #include "stream.h"
 
+#if 0
+
 int recv_from_file(void *handle, uint8_t *b, unsigned int n, unsigned int offset, unsigned int timeout) {
     int fd = * (int *) handle;
     unsigned int remaining = n;
@@ -109,6 +111,8 @@ int putc_over_desc(void *handle, uint8_t byte, unsigned int timeout) {
     return send_over_desc(handle, &byte, 1, timeout);
 }
 
+#endif
+
 enum {
     DirectionTx = 0,
     DirectionSend = DirectionTx,
@@ -183,7 +187,7 @@ int main(int argc, char **argv) {
         server_task(&tcp_server_info);
     } else if (mode == TcpModeClient) {
         initialize_tcp_client_info(&tcp_client_info);
-        tcp_client_info.portno = port;
+        tcp_client_info.infrastructure.portno = port;
         client_task(&tcp_client_info);
     }
 
@@ -197,9 +201,9 @@ int main(int argc, char **argv) {
     rx_looper_args.run = &run;
     rx_looper_args.verbose = verbose;
     if (mode == TcpModeClient) {
-        rx_looper_args.fd = tcp_client_info.client_fd;
+        rx_looper_args.fd = tcp_client_info.infrastructure.fd;
     } else if (mode == TcpModeServer) {
-        rx_looper_args.fd = tcp_server_info.client_fd;
+        rx_looper_args.fd = tcp_server_info.infrastructure.fd;
     }
     pthread_t rx_thread;
 
@@ -235,7 +239,7 @@ int main(int argc, char **argv) {
             }
         } else if (mode == TcpModeServer) {
             const char *str = "hello, world\n";
-            send_over_desc(&tcp_server_info.client_fd, str, sizeof (str), 0);
+            send_over_desc(&tcp_server_info.infrastructure.fd, str, sizeof (str), 0);
         }
     }
 
